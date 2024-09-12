@@ -1,25 +1,27 @@
 import cv2
 import numpy as np
+print(cv2.__version__)
 
 class CameraCalibration:
     def __init__(self, video_path):
         self.video_path = video_path
 
     def calibrate_camera_with_aruco(self):
+        # Use getPredefinedDictionary instead of Dictionary
         aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_250)
+
+        # Using DetectorParameters_create to ensure compatibility
         aruco_params = cv2.aruco.DetectorParameters()
-        detector = cv2.aruco.ArucoDetector(aruco_dict, aruco_params)
+
 
         cap = cv2.VideoCapture(self.video_path)
         all_corners = []
         all_ids = []
         obj_points = []
 
-        marker_length = 0.05
-        obj_point = np.array([[0, 0, 0],
-                              [marker_length, 0, 0],
-                              [marker_length, marker_length, 0],
-                              [0, marker_length, 0]], dtype=np.float32)
+        marker_length = 0.05  # Marker length in meters
+        obj_point = np.zeros((4, 3), np.float32)
+        obj_point[:, :2] = np.array([[0, 0], [1, 0], [1, 1], [0, 1]], np.float32) * marker_length
 
         frame_count = 0
         gray = None
@@ -30,7 +32,7 @@ class CameraCalibration:
                 break
 
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            corners, ids, _ = detector.detectMarkers(gray)
+            corners, ids, _ = cv2.aruco.detectMarkers(gray, aruco_dict, parameters=aruco_params)
 
             if ids is not None:
                 for i in range(len(ids)):
@@ -39,7 +41,7 @@ class CameraCalibration:
                     obj_points.append(obj_point)
 
             frame_count += 1
-            if frame_count >= 600:
+            if frame_count >= 600:  # Process 600 frames
                 break
 
         cap.release()
@@ -48,6 +50,7 @@ class CameraCalibration:
             print("Error: Could not obtain calibration frames.")
             return None, None
 
+        # Camera calibration
         ret, camera_matrix, dist_coeffs, rvecs, tvecs = cv2.calibrateCamera(
             obj_points, all_corners, gray.shape[::-1], None, None
         )
@@ -58,3 +61,4 @@ class CameraCalibration:
         else:
             print("Camera calibration failed.")
             return None, None
+
