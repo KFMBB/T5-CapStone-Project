@@ -8,7 +8,6 @@ class DepthEstimationModel:
         self.model = torch.hub.load("intel-isl/MiDaS", model_type)
         self.model.to(self.device)
         self.model.eval()
-
         self.transform = torch.hub.load("intel-isl/MiDaS", "transforms").small_transform
 
     def estimate_depth(self, img):

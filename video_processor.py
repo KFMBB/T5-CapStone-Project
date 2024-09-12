@@ -10,6 +10,8 @@ class VideoProcessor:
         self.depth_model = DepthEstimationModel()
         self.calibration = CameraCalibration(video_path)
         self.car_detection = CarDetection()
+        
+        # Perform camera calibration
         self.camera_matrix, self.dist_coeffs = self.calibration.calibrate_camera_with_aruco()
         
         if self.camera_matrix is None or self.dist_coeffs is None:
@@ -66,34 +68,34 @@ class VideoProcessor:
                 point_3d = point_3d[0][0]
                 point_3d = np.array([point_3d[0], point_3d[1], 1.0]) * depth_value
 
+                # Convert camera matrix to 4x4 for homogeneous coordinates
+                camera_matrix_homogeneous = np.hstack((self.camera_matrix, np.zeros((3, 1))))
+                camera_matrix_homogeneous = np.vstack((camera_matrix_homogeneous, [0, 0, 0, 1]))
+
                 # Project 3D point back to 2D for visualization
-                rvec = np.zeros(3, dtype=np.float32)
-                tvec = np.zeros(3, dtype=np.float32)
-                point_2d_proj, _ = cv2.projectPoints(point_3d.reshape(1, 1, 3), rvec, tvec, self.camera_matrix, self.dist_coeffs)
-                x_proj, y_proj = point_2d_proj[0][0]
+                projected_point_2d = np.dot(camera_matrix_homogeneous, np.array([point_3d[0], point_3d[1], point_3d[2], 1.0]))
+                projected_point_2d /= projected_point_2d[2]
+                projected_point_2d = tuple(map(int, projected_point_2d[:2]))
 
-                # Draw original bounding box
+                # Draw detection and depth information on the frame
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                cv2.putText(frame, f"Depth: {depth_value:.2f}", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                cv2.circle(frame, projected_point_2d, 5, (255, 0, 0), -1)
 
-                # Draw projected point on the 3D canvas
-                cv2.circle(canvas_3d, (int(x_proj), int(y_proj)), 5, (0, 0, 255), -1)
+                # Draw on 3D canvas
+                cv2.circle(canvas_3d, (int(center_x), int(center_y)), 5, (0, 0, 255), -1)
 
-                # Add depth information
-                cv2.putText(frame, f"Depth: {depth_value:.2f}", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
+            # Write frame to output video
+            self.out.write(frame)
 
-            # Combine original frame and 3D canvas
-            combined_frame = cv2.addWeighted(frame, 0.7, canvas_3d, 0.3, 0)
+            # Show frame
+            cv2.imshow('Frame', frame)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
 
-            # Write the frame to the output video
-            self.out.write(combined_frame)
-
-            # Display frame count every 30 frames (optional for logging purposes)
             self.frame_count += 1
-            if self.frame_count % 30 == 0:
-                print(f"Processed {self.frame_count} frames")
 
-        # Release resources
         self.cap.release()
         self.out.release()
         cv2.destroyAllWindows()
-        print("Video processing complete. Output saved to", self.output_path)
+        print(f"Processing complete. Output saved to {self.output_path}")
