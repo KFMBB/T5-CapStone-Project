@@ -2,7 +2,7 @@ import torch
 
 class CarDetection:
     def __init__(self):
-        self.model = torch.hub.load('ultralytics/yolov5', 'yolov5s')
+        self.model = torch.hub.load('ultralytics/yolov5', 'yolov5s', trust_repo=True)
         self.model.eval()
 
     def detect_cars(self, frame):
