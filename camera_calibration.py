@@ -1,5 +1,7 @@
 import cv2
 import numpy as np
+from absl.testing.parameterized import parameters
+
 print(cv2.__version__)
 
 class CameraCalibration:
@@ -32,7 +34,8 @@ class CameraCalibration:
                 break
 
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            corners, ids, _ = cv2.aruco.detectMarkers(gray, aruco_dict, parameters=aruco_params)
+            detector = cv2.aruco.ArucoDetector(aruco_dict, aruco_params)
+            corners, ids, _ = detector.detectMarkers(gray)
 
             if ids is not None:
                 for i in range(len(ids)):
