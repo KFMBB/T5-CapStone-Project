@@ -11,34 +11,43 @@ class VideoProcessor:
         self.calibration = CameraCalibration(video_path)
         self.car_detection = CarDetection()
 
-        # Perform camera calibration
-        calibration_result = self.calibration.calibrate_camera()
-        if calibration_result[0] is None:
-            print("Camera calibration failed. Using default camera matrix.")
-            self.cap = cv2.VideoCapture(video_path)
-            self.ret, self.frame = self.cap.read()
-            self.height, self.width = self.frame.shape[:2]
-            # Use a default camera matrix if calibration fails
-            self.camera_matrix = np.array([
-                [1000, 0, self.width / 2],
-                [0, 1000, self.height / 2],
-                [0, 0, 1]
-            ])
-        else:
-            self.camera_matrix, _ = calibration_result
-
         self.cap = cv2.VideoCapture(video_path)
         self.ret, self.frame = self.cap.read()
+        if not self.ret:
+            raise ValueError("Failed to read the video file.")
         self.height, self.width = self.frame.shape[:2]
         print(f"Video dimensions: {self.width}x{self.height}")
+
+        # Perform camera calibration
+        self.camera_matrix, self.dist_coeffs = self.calibrate_camera()
 
         # Set up video writer for output
         self.output_path = 'Output/output_video.mp4'
         self.fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        self.out = cv2.VideoWriter(self.output_path, self.fourcc, 20.0, (self.width, self.height))
+        self.fps = self.cap.get(cv2.CAP_PROP_FPS)
+        self.out = cv2.VideoWriter(self.output_path, self.fourcc, self.fps, (self.width, self.height))
 
         self.frame_count = 0
         self.focal_length = self.camera_matrix[0, 0]
+
+    def calibrate_camera(self):
+        print("Attempting camera calibration...")
+        calibration_result = self.calibration.calibrate_camera()
+        if calibration_result[0] is None:
+            print("Camera calibration failed. Using default camera matrix.")
+            camera_matrix = np.array([
+                [1000, 0, self.width / 2],
+                [0, 1000, self.height / 2],
+                [0, 0, 1]
+            ])
+            dist_coeffs = np.zeros((5,1))  # Assuming 5 distortion coefficients
+        else:
+            print("Camera calibration successful.")
+            camera_matrix, dist_coeffs = calibration_result
+
+        print("Camera matrix:")
+        print(camera_matrix)
+        return camera_matrix, dist_coeffs
 
     def draw_3d_box(self, img, corners):
         # Draw 3D bounding box on the image (in red)
@@ -104,7 +113,7 @@ class VideoProcessor:
                                                     depth_value])
 
                 # Project 3D corners to 2D image plane
-                corners_2d, _ = cv2.projectPoints(corners_3d, np.zeros(3), np.zeros(3), self.camera_matrix, None)
+                corners_2d, _ = cv2.projectPoints(corners_3d, np.zeros(3), np.zeros(3), self.camera_matrix, self.dist_coeffs)
                 corners_2d = corners_2d.reshape(-1, 2).astype(int)
 
                 # Draw 3D bounding box
