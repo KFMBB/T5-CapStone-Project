@@ -10,91 +10,134 @@ class VideoProcessor:
         self.depth_model = DepthEstimationModel()
         self.calibration = CameraCalibration(video_path)
         self.car_detection = CarDetection()
-        
-        # Perform camera calibration
-        self.camera_matrix, self.dist_coeffs = self.calibration.calibrate_camera_with_aruco()
-        
-        if self.camera_matrix is None or self.dist_coeffs is None:
-            print("Camera calibration failed. Exiting.")
-            exit()
-        
+
         self.cap = cv2.VideoCapture(video_path)
         self.ret, self.frame = self.cap.read()
+        if not self.ret:
+            raise ValueError("Failed to read the video file.")
         self.height, self.width = self.frame.shape[:2]
         print(f"Video dimensions: {self.width}x{self.height}")
 
-        # Define the codec and create VideoWriter object
-        self.output_path = 'output_video.mp4'
-        self.fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # Codec for .mp4 files
-        self.out = cv2.VideoWriter(self.output_path, self.fourcc, 20.0, (self.width, self.height))
+        # Perform camera calibration
+        self.camera_matrix, self.dist_coeffs = self.calibrate_camera()
 
-        # Initialize frame count
+        # Set up video writer for output
+        self.output_path = 'Output/output_video.mp4'
+        self.fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        self.fps = self.cap.get(cv2.CAP_PROP_FPS)
+        self.out = cv2.VideoWriter(self.output_path, self.fourcc, self.fps, (self.width, self.height))
+
         self.frame_count = 0
+        self.focal_length = self.camera_matrix[0, 0]
+
+    def calibrate_camera(self):
+        print("Attempting camera calibration...")
+        calibration_result = self.calibration.calibrate_camera()
+        if calibration_result[0] is None:
+            print("Camera calibration failed. Using default camera matrix.")
+            camera_matrix = np.array([
+                [1000, 0, self.width / 2],
+                [0, 1000, self.height / 2],
+                [0, 0, 1]
+            ])
+            dist_coeffs = np.zeros((5,1))  # Assuming 5 distortion coefficients
+        else:
+            print("Camera calibration successful.")
+            camera_matrix, dist_coeffs = calibration_result
+
+        print("Camera matrix:")
+        print(camera_matrix)
+        return camera_matrix, dist_coeffs
+
+    def draw_3d_box(self, img, corners):
+        # Draw 3D bounding box on the image (in red)
+        for i in range(4):
+            cv2.line(img, tuple(corners[i]), tuple(corners[(i + 1) % 4]), (0, 0, 255), 2)
+            cv2.line(img, tuple(corners[i + 4]), tuple(corners[(i + 1) % 4 + 4]), (0, 0, 255), 2)
+            cv2.line(img, tuple(corners[i]), tuple(corners[i + 4]), (0, 0, 255), 2)
+        return img
+
+    def estimate_3d_dimensions(self, width_2d, height_2d, depth):
+        # Estimate 3D dimensions of the vehicle
+        width_3d = width_2d * depth / self.focal_length
+        height_3d = height_2d * depth / self.focal_length
+        length_3d = (width_3d + height_3d) / 2
+        return width_3d, height_3d, length_3d
 
     def process_video(self):
         while self.cap.isOpened():
             ret, frame = self.cap.read()
-
             if not ret:
                 break
 
-            # Estimate depth
+            # Convert frame to RGB for depth estimation
             img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             depth_map = self.depth_model.estimate_depth(img)
 
-            # YOLOv5 car detection
+            # Normalize and colorize depth map for visualization
+            depth_map_normalized = cv2.normalize(depth_map, None, 0, 255, cv2.NORM_MINMAX)
+            depth_map_normalized = np.uint8(depth_map_normalized)
+            depth_map_color = cv2.applyColorMap(depth_map_normalized, cv2.COLORMAP_JET)
+
+            # Detect vehicles in the frame
             detections = self.car_detection.detect_cars(frame)
+            vehicle_detections = detections[detections[:, 5] == 2]
 
-            # Filter out cars (YOLOv5 class 'car' is class 2)
-            car_detections = detections[detections[:, 5] == 2]
+            for det in vehicle_detections:
+                x1, y1, x2, y2, conf, cls = det[:6]
+                center_x = (x1 + x2) / 2
+                center_y = (y1 + y2) / 2
 
-            # Create a blank canvas for 3D visualization
-            canvas_3d = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+                # Get depth value for the detected vehicle
+                depth_roi = depth_map[int(y1):int(y2), int(x1):int(x2)]
+                depth_value = np.mean(depth_roi)
 
-            # Loop over detected cars
-            for det in car_detections:
-                x1, y1, x2, y2, conf, cls = map(int, det[:6])
+                # Estimate 3D dimensions
+                width_3d, height_3d, length_3d = self.estimate_3d_dimensions(x2 - x1, y2 - y1, depth_value)
 
-                # Calculate the center of the car
-                center_x = (x1 + x2) // 2
-                center_y = (y1 + y2) // 2
+                # Define 3D bounding box corners
+                corners_3d = np.array([
+                    [-width_3d / 2, -height_3d / 2, -length_3d / 2],
+                    [width_3d / 2, -height_3d / 2, -length_3d / 2],
+                    [width_3d / 2, -height_3d / 2, length_3d / 2],
+                    [-width_3d / 2, -height_3d / 2, length_3d / 2],
+                    [-width_3d / 2, height_3d / 2, -length_3d / 2],
+                    [width_3d / 2, height_3d / 2, -length_3d / 2],
+                    [width_3d / 2, height_3d / 2, length_3d / 2],
+                    [-width_3d / 2, height_3d / 2, length_3d / 2]
+                ])
 
-                # Get the depth value at the center of the car
-                depth_value = depth_map[center_y, center_x]
+                # Transform 3D corners to camera space
+                corners_3d = corners_3d + np.array([(center_x - self.width / 2) * depth_value / self.focal_length,
+                                                    (center_y - self.height / 2) * depth_value / self.focal_length,
+                                                    depth_value])
 
-                # Convert 2D point to 3D using depth information
-                point_2d = np.array([[center_x, center_y]], dtype=np.float32)
-                point_3d = cv2.undistortPoints(point_2d, self.camera_matrix, self.dist_coeffs)
-                point_3d = point_3d[0][0]
-                point_3d = np.array([point_3d[0], point_3d[1], 1.0]) * depth_value
+                # Project 3D corners to 2D image plane
+                corners_2d, _ = cv2.projectPoints(corners_3d, np.zeros(3), np.zeros(3), self.camera_matrix, self.dist_coeffs)
+                corners_2d = corners_2d.reshape(-1, 2).astype(int)
 
-                # Convert camera matrix to 4x4 for homogeneous coordinates
-                camera_matrix_homogeneous = np.hstack((self.camera_matrix, np.zeros((3, 1))))
-                camera_matrix_homogeneous = np.vstack((camera_matrix_homogeneous, [0, 0, 0, 1]))
+                # Draw 3D bounding box
+                frame = self.draw_3d_box(frame, corners_2d)
 
-                # Project 3D point back to 2D for visualization
-                projected_point_2d = np.dot(camera_matrix_homogeneous, np.array([point_3d[0], point_3d[1], point_3d[2], 1.0]))
-                projected_point_2d /= projected_point_2d[2]
-                projected_point_2d = tuple(map(int, projected_point_2d[:2]))
+                # Draw 2D bounding box and depth information
+                cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (255, 0, 0), 2)
+                cv2.putText(frame, f"Depth: {depth_value:.2f}", (int(x1), int(y1) - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                            (0, 255, 0), 2)
 
-                # Draw detection and depth information on the frame
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                cv2.putText(frame, f"Depth: {depth_value:.2f}", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-                cv2.circle(frame, projected_point_2d, 5, (255, 0, 0), -1)
-
-                # Draw on 3D canvas
-                cv2.circle(canvas_3d, (int(center_x), int(center_y)), 5, (0, 0, 255), -1)
+            # Blend original frame with depth map for visualization
+            blended_frame = cv2.addWeighted(frame, 0.7, depth_map_color, 0.3, 0)
 
             # Write frame to output video
-            self.out.write(frame)
+            self.out.write(blended_frame)
 
-            # Show frame
-            cv2.imshow('Frame', frame)
+            # Display the processed frame
+            cv2.imshow('Frame with Depth', blended_frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
 
             self.frame_count += 1
 
+        # Clean up
         self.cap.release()
         self.out.release()
         cv2.destroyAllWindows()
