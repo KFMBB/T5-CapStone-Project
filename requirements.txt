@@ -1,7 +1,10 @@
 opencv-python
 opencv-python-headless
 opencv-contrib-python
+timm
+numpy
 torch
 torchvision
-timm
 ultralytics
+absl-py
+scipy
