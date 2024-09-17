@@ -124,4 +124,3 @@ class CameraCalibration:
 
         return camera_matrix, None  # Return None for distortion coefficients as they're not calculated in this method
 
-
