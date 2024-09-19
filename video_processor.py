@@ -59,14 +59,14 @@ class VideoProcessor:
             # Apply road mask
             masked_frame = self.depth_masker.apply_mask(frame)
 
+            # Estimate depth for masked frame
+            depth_map = self.depth_model.estimate_depth(masked_frame)
+
             # Detect vehicles in the masked frame
             detections = self.car_detection.detect_cars(masked_frame)
 
             # Update tracks
             tracks = self.tracker.update(detections)
-
-            # Estimate depth for masked frame
-            depth_map = self.depth_model.estimate_depth(masked_frame)
 
             # Collect frames for calibration
             if self.frame_count % 30 == 0 and len(calibration_frames) < 10:
@@ -95,26 +95,29 @@ class VideoProcessor:
                         cv2.putText(masked_frame, f"Depth: {vehicle_depth:.2f}", (x1, y1 - 10),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 0, 0), 2)
 
-                        # Perform projective transformation
-                        points_2d = np.array([[x1, y1], [x2, y1], [x2, y2], [x1, y2]], dtype=np.float32)
-                        points_3d = self.transformation.back_project(points_2d, self.camera_matrix, self.dist_coeffs,
-                                                                     vehicle_depth)
-
-                        # Calculate the center and dimensions of the 3D bounding box
-                        center_3d = np.mean(points_3d, axis=0)
-                        dimensions_3d = np.max(points_3d, axis=0) - np.min(points_3d, axis=0)
+                        # Calculate 3D bounding box dimensions
+                        width_3d = (x2 - x1) * vehicle_depth / self.camera_matrix[0, 0]
+                        height_3d = (y2 - y1) * vehicle_depth / self.camera_matrix[1, 1]
+                        length_3d = (width_3d + height_3d) / 2  # Estimate length as average of width and height
 
                         # Define 3D bounding box corners
+                        x_center = (x1 + x2) / 2
+                        y_center = (y1 + y2) / 2
                         corners_3d = np.array([
-                            center_3d + [-dimensions_3d[0] / 2, -dimensions_3d[1] / 2, -dimensions_3d[2] / 2],
-                            center_3d + [dimensions_3d[0] / 2, -dimensions_3d[1] / 2, -dimensions_3d[2] / 2],
-                            center_3d + [dimensions_3d[0] / 2, -dimensions_3d[1] / 2, dimensions_3d[2] / 2],
-                            center_3d + [-dimensions_3d[0] / 2, -dimensions_3d[1] / 2, dimensions_3d[2] / 2],
-                            center_3d + [-dimensions_3d[0] / 2, dimensions_3d[1] / 2, -dimensions_3d[2] / 2],
-                            center_3d + [dimensions_3d[0] / 2, dimensions_3d[1] / 2, -dimensions_3d[2] / 2],
-                            center_3d + [dimensions_3d[0] / 2, dimensions_3d[1] / 2, dimensions_3d[2] / 2],
-                            center_3d + [-dimensions_3d[0] / 2, dimensions_3d[1] / 2, dimensions_3d[2] / 2]
+                            [-width_3d / 2, -height_3d / 2, 0],
+                            [width_3d / 2, -height_3d / 2, 0],
+                            [width_3d / 2, -height_3d / 2, -length_3d],
+                            [-width_3d / 2, -height_3d / 2, -length_3d],
+                            [-width_3d / 2, height_3d / 2, 0],
+                            [width_3d / 2, height_3d / 2, 0],
+                            [width_3d / 2, height_3d / 2, -length_3d],
+                            [-width_3d / 2, height_3d / 2, -length_3d]
                         ])
+
+                        # Transform 3D points to camera coordinate system
+                        corners_3d += np.array([(x_center - self.width / 2) * vehicle_depth / self.camera_matrix[0, 0],
+                                                (y_center - self.height / 2) * vehicle_depth / self.camera_matrix[1, 1],
+                                                vehicle_depth])
 
                         # Project 3D corners to 2D image plane
                         corners_2d, _ = cv2.projectPoints(corners_3d, np.zeros(3), np.zeros(3),
@@ -142,8 +145,19 @@ class VideoProcessor:
 
     def draw_3d_box(self, img, corners, color=(0, 255, 0)):
         # Draw 3D bounding box on the image
+        def draw_line(start, end):
+            cv2.line(img, tuple(start), tuple(end), color, 2)
+
+        # Draw the front face
         for i in range(4):
-            cv2.line(img, tuple(corners[i]), tuple(corners[(i + 1) % 4]), color, 2)
-            cv2.line(img, tuple(corners[i + 4]), tuple(corners[(i + 1) % 4 + 4]), color, 2)
-            cv2.line(img, tuple(corners[i]), tuple(corners[i + 4]), color, 2)
+            draw_line(corners[i], corners[(i + 1) % 4])
+
+        # Draw the rear face
+        for i in range(4):
+            draw_line(corners[i + 4], corners[((i + 1) % 4) + 4])
+
+        # Draw the lines connecting front and rear faces
+        for i in range(4):
+            draw_line(corners[i], corners[i + 4])
+
         return img
