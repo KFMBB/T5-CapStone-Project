@@ -2,7 +2,7 @@ from video_processor import VideoProcessor
 
 def main():
     # Set your video path here
-    video_path = 'Input/Calibration_test.mp4'
+    video_path = 'Input/Calibration_test2.mov'
 
     # Initialize the video processor
     processor = VideoProcessor(video_path)
