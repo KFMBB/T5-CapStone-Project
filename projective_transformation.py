@@ -1,30 +1,28 @@
-import numpy as np
 import cv2
+import numpy as np
+
 
 class ProjectiveTransformation:
-    def __init__(self, camera_matrix, dist_coeffs):
-        self.camera_matrix = camera_matrix
-        self.dist_coeffs = dist_coeffs
+    def __init__(self):
+        pass
 
-    def perform_transformation(self, image, points_2d):
-        # Assuming points_2d are the points to transform
-        # Define 3D points if known or estimated
-        points_3d = np.array([
-            [0, 0, 0],  # Example points
-            [1, 0, 0],
-            [1, 1, 0],
-            [0, 1, 0]
-        ], dtype=np.float32)
+    def back_project(self, points_2d, camera_matrix, dist_coeffs, depth):
+        # Undistort points
+        points_2d_undistorted = cv2.undistortPoints(points_2d, camera_matrix, dist_coeffs)
 
-        # Find the homography matrix
-        H, _ = cv2.findHomography(points_2d, points_3d)
+        # Get focal length and principal point
+        fx = camera_matrix[0, 0]
+        fy = camera_matrix[1, 1]
+        cx = camera_matrix[0, 2]
+        cy = camera_matrix[1, 2]
 
-        # Perform the projection
-        transformed_image = cv2.warpPerspective(image, H, (image.shape[1], image.shape[0]))
-        return transformed_image
+        # Back-project to 3D
+        points_3d = []
+        for point in points_2d_undistorted:
+            x, y = point[0]
+            X = (x - cx) * depth / fx
+            Y = (y - cy) * depth / fy
+            Z = depth
+            points_3d.append([X, Y, Z])
 
-    def calculate_depth(self, corners_3d):
-        # Calculate depth based on 3D corners
-        depths = corners_3d[:, 2]
-        average_depth = np.mean(depths)
-        return average_depth
+        return np.array(points_3d)
