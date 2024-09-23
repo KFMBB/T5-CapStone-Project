@@ -7,6 +7,7 @@ class VehicleTracker:
         self.frame_count = 0
         self.max_frames_to_skip = max_frames_to_skip
         self.min_hits = min_hits
+        self.track_history = {}
 
     def update(self, detections):
         self.frame_count += 1
@@ -15,6 +16,7 @@ class VehicleTracker:
         for track_id in list(self.tracks.keys()):
             if self.frame_count - self.tracks[track_id]['last_seen'] > self.max_frames_to_skip:
                 del self.tracks[track_id]
+                del self.track_history[track_id]
             else:
                 self.tracks[track_id]['missed_frames'] += 1
 
@@ -28,15 +30,22 @@ class VehicleTracker:
                     self.tracks[track_id]['missed_frames'] = 0
                     self.tracks[track_id]['hits'] += 1
                     matched = True
+
+                    if track_id not in self.track_history:
+                        self.track_history[track_id] = []
+                    self.track_history[track_id].append(detection)
+
                     break
 
             if not matched:
-                self.tracks[len(self.tracks)] = {
+                new_track_id = len(self.tracks)
+                self.tracks[new_track_id] = {
                     'bbox': detection,
                     'last_seen': self.frame_count,
                     'missed_frames': 0,
                     'hits': 1
                 }
+                self.track_history[new_track_id] = [detection]
 
         return self.tracks
 
@@ -55,3 +64,6 @@ class VehicleTracker:
 
         iou = intersect_area / float(bbox1_area + bbox2_area - intersect_area)
         return iou
+
+    def get_track_history(self, track_id):
+        return self.track_history.get(track_id, [])

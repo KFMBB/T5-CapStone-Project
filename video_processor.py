@@ -6,6 +6,9 @@ from car_detection import CarDetection
 from projective_transformation import ProjectiveTransformation
 from vehicle_tracker import VehicleTracker
 from depth_masker import DepthMasker
+from position_calculator import PositionCalculator
+from speed_calculator import SpeedCalculator
+from roi_selector import ROISelector
 
 
 class VideoProcessor:
@@ -22,33 +25,39 @@ class VideoProcessor:
         self.height, self.width = self.frame.shape[:2]
         print(f"Video dimensions: {self.width}x{self.height}")
 
-        # Initialize depth masker
         self.depth_masker = DepthMasker(self.height, self.width)
+        self.roi_selector = ROISelector(self.height, self.width)
 
-        # Initialize camera calibration
         self.calibration = CameraCalibration()
         self.camera_matrix, self.dist_coeffs = None, None
 
-        # Initialize Projective Transformation
         self.transformation = ProjectiveTransformation()
 
-        # Set up video writer for output
         self.output_path = 'Output/output_video.mp4'
         self.fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         self.fps = self.cap.get(cv2.CAP_PROP_FPS)
         self.out = cv2.VideoWriter(self.output_path, self.fourcc, self.fps, (self.width, self.height))
 
         self.frame_count = 0
+        self.scale_factor = None
+
+        self.position_calculator = None
+        self.speed_calculator = SpeedCalculator()
+
+        self.current_frame_time = 0
+        self.previous_frame_time = 0
 
     def process_video(self):
-        # Manual road selection
         self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
         ret, first_frame = self.cap.read()
         if not ret:
             raise ValueError("Failed to read the first frame.")
+
+        self.roi_selector.select_roi(first_frame)
         self.depth_masker.manual_road_selection(first_frame)
 
         calibration_frames = []
+        all_detections = []
 
         self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
         while self.cap.isOpened():
@@ -56,53 +65,60 @@ class VideoProcessor:
             if not ret:
                 break
 
-            # Apply road mask
+            self.current_frame_time = self.cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+
             masked_frame = self.depth_masker.apply_mask(frame)
-
-            # Estimate depth for masked frame
             depth_map = self.depth_model.estimate_depth(masked_frame)
-
-            # Detect vehicles in the masked frame
             detections = self.car_detection.detect_cars(masked_frame)
 
-            # Update tracks
-            tracks = self.tracker.update(detections)
+            # Filter detections based on ROI
+            roi_detections = [det for det in detections if self.roi_selector.is_in_roi((det[0], det[1]))]
+            all_detections.extend(roi_detections)
 
-            # Collect frames for calibration
             if self.frame_count % 30 == 0 and len(calibration_frames) < 10:
                 calibration_frames.append(masked_frame)
 
-            # Perform camera calibration if we have enough frames
             if len(calibration_frames) == 10 and self.camera_matrix is None:
                 self.camera_matrix, self.dist_coeffs = self.calibration.calibrate_camera(calibration_frames)
+                self.scale_factor = self.calibration.get_scale_factor(all_detections)
+                self.position_calculator = PositionCalculator(self.camera_matrix)
                 print("Camera calibration completed.")
                 print("Camera matrix:", self.camera_matrix)
-                print("Distortion coefficients:", self.dist_coeffs)
+                print("Scale factor:", self.scale_factor)
 
-            # Process tracked vehicles
+            tracks = self.tracker.update(roi_detections)
+
+            # Create a copy of the masked frame for drawing
+            display_frame = masked_frame.copy()
+
             if self.camera_matrix is not None:
                 for track_id, track in tracks.items():
                     if track['hits'] >= self.tracker.min_hits and track['missed_frames'] == 0:
                         x1, y1, x2, y2 = map(int, track['bbox'][:4])
-
-                        # Calculate average depth for the vehicle
                         vehicle_depth = np.mean(depth_map[y1:y2, x1:x2])
 
-                        # Draw 2D bounding box
-                        cv2.rectangle(masked_frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
-
-                        # Write depth on the bounding box
-                        cv2.putText(masked_frame, f"Depth: {vehicle_depth:.2f}", (x1, y1 - 10),
+                        cv2.rectangle(display_frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
+                        cv2.putText(display_frame, f"Depth: {vehicle_depth:.2f}", (x1, y1 - 10),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 0, 0), 2)
 
-                        # Calculate 3D bounding box dimensions
-                        width_3d = (x2 - x1) * vehicle_depth / self.camera_matrix[0, 0]
-                        height_3d = (y2 - y1) * vehicle_depth / self.camera_matrix[1, 1]
-                        length_3d = (width_3d + height_3d) / 2  # Estimate length as average of width and height
+                        # Calculate real-world dimensions
+                        width_3d = (x2 - x1) * self.scale_factor
+                        height_3d = (y2 - y1) * self.scale_factor
+                        length_3d = (width_3d + height_3d) / 2
 
-                        # Define 3D bounding box corners
+                        # Calculate 3D position
                         x_center = (x1 + x2) / 2
                         y_center = (y1 + y2) / 2
+                        center_3d = self.position_calculator.calculate_3d_position(x_center, y_center, vehicle_depth)
+
+                        # Calculate and display speed
+                        speed = self.speed_calculator.calculate_speed(track_id, center_3d, self.current_frame_time,
+                                                                      self.previous_frame_time)
+                        if speed is not None:
+                            cv2.putText(display_frame, f"Speed: {speed:.2f} m/s", (x1, y1 - 30),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 0, 0), 2)
+
+                        # Define 3D bounding box corners in camera coordinates
                         corners_3d = np.array([
                             [-width_3d / 2, -height_3d / 2, 0],
                             [width_3d / 2, -height_3d / 2, 0],
@@ -115,49 +131,41 @@ class VideoProcessor:
                         ])
 
                         # Transform 3D points to camera coordinate system
-                        corners_3d += np.array([(x_center - self.width / 2) * vehicle_depth / self.camera_matrix[0, 0],
-                                                (y_center - self.height / 2) * vehicle_depth / self.camera_matrix[1, 1],
-                                                vehicle_depth])
+                        corners_3d += center_3d
 
                         # Project 3D corners to 2D image plane
                         corners_2d, _ = cv2.projectPoints(corners_3d, np.zeros(3), np.zeros(3),
                                                           self.camera_matrix, self.dist_coeffs)
-                        corners_2d = corners_2d.reshape(-1, 2).astype(int)
+                        corners_2d = corners_2d.reshape(-1, 2)
 
-                        # Draw 3D bounding box in green
-                        self.draw_3d_box(masked_frame, corners_2d, color=(0, 255, 0))
+                        # Check if corners_2d contains any nan values
+                        if not np.isnan(corners_2d).any():
+                            corners_2d = corners_2d.astype(int)
+                            self.draw_3d_box(display_frame, corners_2d, color=(0, 255, 0))
 
-            # Write frame to output video
-            self.out.write(masked_frame)
+            # Draw ROI on the frame (optional, for visualization)
+            cv2.polylines(display_frame, [self.roi_selector.roi_points], True, (0, 255, 0), 2)
 
-            # Display the processed frame
-            cv2.imshow('Processed Frame', masked_frame)
+            self.out.write(display_frame)
+            cv2.imshow('Processed Frame', display_frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
 
+            self.previous_frame_time = self.current_frame_time
             self.frame_count += 1
 
-        # Clean up
         self.cap.release()
         self.out.release()
         cv2.destroyAllWindows()
         print(f"Processing complete. Output saved to {self.output_path}")
 
     def draw_3d_box(self, img, corners, color=(0, 255, 0)):
-        # Draw 3D bounding box on the image
         def draw_line(start, end):
             cv2.line(img, tuple(start), tuple(end), color, 2)
 
-        # Draw the front face
         for i in range(4):
             draw_line(corners[i], corners[(i + 1) % 4])
-
-        # Draw the rear face
-        for i in range(4):
             draw_line(corners[i + 4], corners[((i + 1) % 4) + 4])
-
-        # Draw the lines connecting front and rear faces
-        for i in range(4):
             draw_line(corners[i], corners[i + 4])
 
         return img
