@@ -1,13 +1,11 @@
 import numpy as np
-
-
 class VehicleTracker:
     def __init__(self, max_frames_to_skip=10, min_hits=3):
         self.tracks = {}
         self.frame_count = 0
         self.max_frames_to_skip = max_frames_to_skip
         self.min_hits = min_hits
-        self.track_history = {}
+        self.track_id_count = 0
 
     def update(self, detections):
         self.frame_count += 1
@@ -16,42 +14,36 @@ class VehicleTracker:
         for track_id in list(self.tracks.keys()):
             if self.frame_count - self.tracks[track_id]['last_seen'] > self.max_frames_to_skip:
                 del self.tracks[track_id]
-                del self.track_history[track_id]
             else:
                 self.tracks[track_id]['missed_frames'] += 1
 
         # Match detections to tracks
-        for detection in detections:
-            matched = False
-            for track_id, track in self.tracks.items():
-                if self.iou(detection, track['bbox']) > 0.3:  # IOU threshold
-                    self.tracks[track_id]['bbox'] = detection
-                    self.tracks[track_id]['last_seen'] = self.frame_count
-                    self.tracks[track_id]['missed_frames'] = 0
-                    self.tracks[track_id]['hits'] += 1
-                    matched = True
+        if len(detections) > 0:
+            for detection in detections:
+                matched = False
+                for track_id, track in self.tracks.items():
+                    if self.iou(detection[:4], track['bbox'][:4]) > 0.3:  # IOU threshold
+                        self.tracks[track_id]['bbox'] = detection
+                        self.tracks[track_id]['last_seen'] = self.frame_count
+                        self.tracks[track_id]['missed_frames'] = 0
+                        self.tracks[track_id]['hits'] += 1
+                        matched = True
+                        break
 
-                    if track_id not in self.track_history:
-                        self.track_history[track_id] = []
-                    self.track_history[track_id].append(detection)
-
-                    break
-
-            if not matched:
-                new_track_id = len(self.tracks)
-                self.tracks[new_track_id] = {
-                    'bbox': detection,
-                    'last_seen': self.frame_count,
-                    'missed_frames': 0,
-                    'hits': 1
-                }
-                self.track_history[new_track_id] = [detection]
+                if not matched:
+                    self.track_id_count += 1
+                    self.tracks[self.track_id_count] = {
+                        'bbox': detection,
+                        'last_seen': self.frame_count,
+                        'missed_frames': 0,
+                        'hits': 1
+                    }
 
         return self.tracks
 
     def iou(self, bbox1, bbox2):
-        x1, y1, x2, y2 = bbox1[:4]
-        x3, y3, x4, y4 = bbox2[:4]
+        x1, y1, x2, y2 = bbox1
+        x3, y3, x4, y4 = bbox2
 
         xi1, yi1, xi2, yi2 = max(x1, x3), max(y1, y3), min(x2, x4), min(y2, y4)
 
