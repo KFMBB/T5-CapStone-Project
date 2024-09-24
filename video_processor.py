@@ -88,23 +88,22 @@ class VideoProcessor:
 
             tracks = self.tracker.update(roi_detections)
 
-            # Create a copy of the masked frame for drawing
             display_frame = masked_frame.copy()
 
             if self.camera_matrix is not None:
                 for track_id, track in tracks.items():
                     if track['hits'] >= self.tracker.min_hits and track['missed_frames'] == 0:
-                        x1, y1, x2, y2 = map(int, track['bbox'][:4])
+                        x1, y1, x2, y2, conf, cls = map(float, track['bbox'])
+                        x1, y1, x2, y2 = map(int, (x1, y1, x2, y2))
                         vehicle_depth = np.mean(depth_map[y1:y2, x1:x2])
 
+                        # Draw 2D bounding box
                         cv2.rectangle(display_frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
-                        cv2.putText(display_frame, f"Depth: {vehicle_depth:.2f}", (x1, y1 - 10),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 0, 0), 2)
 
                         # Calculate real-world dimensions
                         width_3d = (x2 - x1) * self.scale_factor
                         height_3d = (y2 - y1) * self.scale_factor
-                        length_3d = (width_3d + height_3d) / 2
+                        length_3d = max(width_3d, height_3d)  # Assume length is the larger of width or height
 
                         # Calculate 3D position
                         x_center = (x1 + x2) / 2
@@ -112,36 +111,42 @@ class VideoProcessor:
                         center_3d = self.position_calculator.calculate_3d_position(x_center, y_center, vehicle_depth)
 
                         # Calculate and display speed
-                        speed = self.speed_calculator.calculate_speed(track_id, center_3d, self.current_frame_time,
-                                                                      self.previous_frame_time)
-                        if speed is not None:
-                            cv2.putText(display_frame, f"Speed: {speed:.2f} m/s", (x1, y1 - 30),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 0, 0), 2)
+                        speed, speed_conf = self.speed_calculator.calculate_speed(track_id, center_3d,
+                                                                                  self.current_frame_time,
+                                                                                  self.previous_frame_time)
 
                         # Define 3D bounding box corners in camera coordinates
                         corners_3d = np.array([
-                            [-width_3d / 2, -height_3d / 2, 0],
-                            [width_3d / 2, -height_3d / 2, 0],
-                            [width_3d / 2, -height_3d / 2, -length_3d],
-                            [-width_3d / 2, -height_3d / 2, -length_3d],
-                            [-width_3d / 2, height_3d / 2, 0],
-                            [width_3d / 2, height_3d / 2, 0],
-                            [width_3d / 2, height_3d / 2, -length_3d],
-                            [-width_3d / 2, height_3d / 2, -length_3d]
+                            [-width_3d / 2, -height_3d / 2, length_3d / 2],
+                            [width_3d / 2, -height_3d / 2, length_3d / 2],
+                            [width_3d / 2, height_3d / 2, length_3d / 2],
+                            [-width_3d / 2, height_3d / 2, length_3d / 2],
+                            [-width_3d / 2, -height_3d / 2, -length_3d / 2],
+                            [width_3d / 2, -height_3d / 2, -length_3d / 2],
+                            [width_3d / 2, height_3d / 2, -length_3d / 2],
+                            [-width_3d / 2, height_3d / 2, -length_3d / 2]
                         ])
 
                         # Transform 3D points to camera coordinate system
-                        corners_3d += center_3d
+                        corners_3d = corners_3d + center_3d
 
                         # Project 3D corners to 2D image plane
                         corners_2d, _ = cv2.projectPoints(corners_3d, np.zeros(3), np.zeros(3),
                                                           self.camera_matrix, self.dist_coeffs)
-                        corners_2d = corners_2d.reshape(-1, 2)
+                        corners_2d = corners_2d.reshape(-1, 2).astype(int)
 
-                        # Check if corners_2d contains any nan values
-                        if not np.isnan(corners_2d).any():
-                            corners_2d = corners_2d.astype(int)
-                            self.draw_3d_box(display_frame, corners_2d, color=(0, 255, 0))
+                        # Draw 3D bounding box
+                        self.draw_3d_box(display_frame, corners_2d, color=(0, 255, 0))
+
+                        # Display information
+                        info_text = f"ID: {track_id}, Conf: {conf:.2f}, Depth: {vehicle_depth:.2f}m"
+                        cv2.putText(display_frame, info_text, (x1, y1 - 10),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+
+                        if speed is not None:
+                            speed_text = f"Speed: {speed:.2f} m/s, Conf: {speed_conf:.2f}"
+                            cv2.putText(display_frame, speed_text, (x1, y1 - 30),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
 
             # Draw ROI on the frame (optional, for visualization)
             cv2.polylines(display_frame, [self.roi_selector.roi_points], True, (0, 255, 0), 2)
@@ -163,9 +168,16 @@ class VideoProcessor:
         def draw_line(start, end):
             cv2.line(img, tuple(start), tuple(end), color, 2)
 
+        # Draw front face
         for i in range(4):
             draw_line(corners[i], corners[(i + 1) % 4])
+
+        # Draw back face
+        for i in range(4):
             draw_line(corners[i + 4], corners[((i + 1) % 4) + 4])
+
+        # Draw lines connecting front and back faces
+        for i in range(4):
             draw_line(corners[i], corners[i + 4])
 
         return img
