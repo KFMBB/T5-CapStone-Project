@@ -4,7 +4,7 @@ import tensorflow as tf
 from tensorflow import keras
 
 class CameraCalibration:
-    def __init__(self, model_path='models/vanishing_point_detection_model.h5'):
+    def __init__(self, model_path='models/best_model.keras'):
         self.focal_length = None
         self.principal_point = None
         self.vanishing_points = None
