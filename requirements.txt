@@ -1,8 +1,11 @@
-opencv-python
-timm
-numpy
-torch
 torchvision
-ultralytics
 absl-py
 scipy
+opencv-python-headless
+tensorflow
+keras
+numpy
+torch
+transformers
+ultralytics
+timm
