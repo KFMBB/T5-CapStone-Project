@@ -10,7 +10,6 @@ from position_calculator import PositionCalculator
 from speed_calculator import SpeedCalculator
 from roi_selector import ROISelector
 
-
 class VideoProcessor:
     def __init__(self, video_path):
         self.video_path = video_path
@@ -30,8 +29,7 @@ class VideoProcessor:
 
         self.calibration = CameraCalibration()
         self.camera_matrix, self.dist_coeffs = None, None
-
-        self.transformation = ProjectiveTransformation()
+        self.projective_transform = None
 
         self.output_path = 'Output/output_video.mp4'
         self.fourcc = cv2.VideoWriter_fourcc(*'mp4v')
@@ -68,23 +66,46 @@ class VideoProcessor:
             self.current_frame_time = self.cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
 
             masked_frame = self.depth_masker.apply_mask(frame)
-            depth_map = self.depth_model.estimate_depth(masked_frame)
-            detections = self.car_detection.detect_cars(masked_frame)
-
-            # Filter detections based on ROI
-            roi_detections = [det for det in detections if self.roi_selector.is_in_roi((det[0], det[1]))]
-            all_detections.extend(roi_detections)
 
             if self.frame_count % 30 == 0 and len(calibration_frames) < 10:
                 calibration_frames.append(masked_frame)
 
             if len(calibration_frames) == 10 and self.camera_matrix is None:
                 self.camera_matrix, self.dist_coeffs = self.calibration.calibrate_camera(calibration_frames)
+                self.projective_transform = ProjectiveTransformation(self.calibration)
+
+                binary_mask = (self.depth_masker.get_mask() > 0).astype(np.uint8) * 255
+                print(f"Binary mask shape: {binary_mask.shape}")
+                print(f"Binary mask non-zero elements: {np.count_nonzero(binary_mask)}")
+
+                original_vis, transformed_vis = self.projective_transform.construct_transformation(binary_mask)
+
+                # Apply transformation to the actual frame
+                transformed_frame = self.projective_transform.apply_transformation(masked_frame)
+
+                # Display all visualizations
+                cv2.imshow('Original with Source Points', original_vis)
+                cv2.imshow('Transformed with Destination Points', transformed_vis)
+                cv2.imshow('Transformed Frame', transformed_frame)
+                cv2.waitKey(1)
+
                 self.scale_factor = self.calibration.get_scale_factor(all_detections)
                 self.position_calculator = PositionCalculator(self.camera_matrix)
                 print("Camera calibration completed.")
                 print("Camera matrix:", self.camera_matrix)
                 print("Scale factor:", self.scale_factor)
+
+            if self.projective_transform is not None:
+                transformed_frame = self.projective_transform.apply_transformation(masked_frame)
+            else:
+                transformed_frame = masked_frame
+
+            depth_map = self.depth_model.estimate_depth(transformed_frame)
+            detections = self.car_detection.detect_cars(transformed_frame)
+
+            # Filter detections based on ROI
+            roi_detections = [det for det in detections if self.roi_selector.is_in_roi((det[0], det[1]))]
+            all_detections.extend(roi_detections)
 
             tracks = self.tracker.update(roi_detections)
 
@@ -95,6 +116,12 @@ class VideoProcessor:
                     if track['hits'] >= self.tracker.min_hits and track['missed_frames'] == 0:
                         x1, y1, x2, y2, conf, cls = map(float, track['bbox'])
                         x1, y1, x2, y2 = map(int, (x1, y1, x2, y2))
+
+                        # Transform bounding box back to original frame
+                        if self.projective_transform is not None:
+                            [[x1, y1], [x2, y2]] = self.projective_transform.apply_inverse_transformation(np.array([[x1, y1], [x2, y2]])).astype(int)
+                            x1, y1, x2, y2 = map(int, [x1, y1, x2, y2])
+
                         vehicle_depth = np.mean(depth_map[y1:y2, x1:x2])
 
                         # Draw 2D bounding box
