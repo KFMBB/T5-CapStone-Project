@@ -72,3 +72,8 @@ class CameraCalibration:
         scale_factor = average_vehicle_width / mean_width
 
         return scale_factor
+
+    def get_vanishing_points(self):
+        if self.vanishing_points is None:
+            raise ValueError("Camera calibration has not been performed. Call calibrate_camera first.")
+        return self.vanishing_points
