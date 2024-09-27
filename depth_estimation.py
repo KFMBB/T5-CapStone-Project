@@ -30,4 +30,9 @@ class DepthEstimationModel:
 
         # Normalize the depth map
         depth_map = prediction.cpu().numpy()
-        return cv2.normalize(depth_map, None, 0, 1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+        depth_map = cv2.normalize(depth_map, None, 0, 1, norm_type=cv2.NORM_MINMAX)
+
+        # Apply additional smoothing
+        depth_map = cv2.GaussianBlur(depth_map, (5, 5), 0)
+
+        return depth_map
