@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+import json
 
 class DepthMasker:
     def __init__(self, height, width):
@@ -46,3 +47,28 @@ class DepthMasker:
 
     def get_mask(self):
         return self.road_mask
+
+    def apply_depth_mask(self, frame, depth_map, threshold=0.5):
+        if self.road_mask is None:
+            raise ValueError("Road mask has not been created. Call manual_road_selection first.")
+
+        if frame.shape[:2] != (self.height, self.width) or depth_map.shape != (self.height, self.width):
+            raise ValueError("Frame or depth map dimensions do not match the initialized dimensions.")
+
+        # Normalize depth map to 0-1 range
+        normalized_depth = cv2.normalize(depth_map, None, 0, 1, norm_type=cv2.NORM_MINMAX)
+
+        # Create binary mask based on depth threshold
+        depth_mask = (normalized_depth > threshold).astype(np.uint8) * 255
+
+        # Combine depth mask with road mask
+        combined_mask = cv2.bitwise_and(self.road_mask, depth_mask)
+
+        # Apply combined mask to frame
+        return cv2.bitwise_and(frame, frame, mask=combined_mask)
+
+    def save_road_mask(self, filename):
+        np.save(filename, self.road_mask)
+
+    def load_road_mask(self, filename):
+        self.road_mask = np.load(filename)
