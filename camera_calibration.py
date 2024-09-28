@@ -5,7 +5,7 @@ from tensorflow import keras
 import json
 
 class CameraCalibration:
-    def __init__(self, model_path='models/best_model.keras'):
+    def __init__(self, model_path='models/vp_using_seg_model_best.keras'):
         self.focal_length = None
         self.principal_point = None
         self.vanishing_points = None
@@ -39,6 +39,9 @@ class CameraCalibration:
         # Compute IPM matrix
         self.compute_ipm_matrix()
 
+        # Visualize vanishing points
+        self.visualize_vanishing_points(frames[0], [vp1, vp2, vp3])
+
         return self.ipm_matrix
 
     def orthogonalize_vanishing_points(self, vp1, vp2):
@@ -56,12 +59,12 @@ class CameraCalibration:
         frame = np.expand_dims(frame, axis=0)
 
         # Predict vanishing point
-        vp = self.model.predict(frame)[0]
+        segmentation, vp = self.model.predict(frame)
+        vp = vp[0]  # Get the first (and only) prediction
 
         # Convert normalized coordinates back to image space
         vp = np.array([vp[0] * self.width, vp[1] * self.height, 1])
         return vp
-
 
     def compute_ipm_matrix(self):
         # Define source points (in image plane)
@@ -82,7 +85,6 @@ class CameraCalibration:
 
         # Compute the IPM matrix
         self.ipm_matrix = cv2.getPerspectiveTransform(src_points, dst_points)
-
 
     def get_camera_matrix(self):
         if self.focal_length is None or self.principal_point is None:
@@ -121,3 +123,27 @@ class CameraCalibration:
         if self.width is None or self.height is None:
             self.height, self.width = frame.shape[:2]
         return cv2.warpPerspective(frame, self.ipm_matrix, (self.width, self.height))
+
+    def visualize_vanishing_points(self, frame, vanishing_points):
+        """
+        Visualize vanishing points on the frame
+        """
+        frame_with_vps = frame.copy()
+
+        # Draw vanishing points on the image
+        for idx, vp in enumerate(vanishing_points):
+            x, y = int(vp[0]), int(vp[1])
+            cv2.circle(frame_with_vps, (x, y), 10, (0, 0, 255), -1)  # Red circles for vanishing points
+            cv2.putText(frame_with_vps, f'VP{idx+1}', (x + 15, y + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+
+        # Optionally: Show lines converging towards the vanishing point (e.g., horizon or lane markings)
+        for vp in vanishing_points:
+            # Draw lines converging to vanishing points from different positions in the image
+            cv2.line(frame_with_vps, (self.width // 4, self.height), (int(vp[0]), int(vp[1])), (0, 255, 0), 2)
+            cv2.line(frame_with_vps, (self.width // 2, self.height), (int(vp[0]), int(vp[1])), (0, 255, 0), 2)
+            cv2.line(frame_with_vps, (3 * self.width // 4, self.height), (int(vp[0]), int(vp[1])), (0, 255, 0), 2)
+
+        # Display the frame with vanishing points
+        cv2.imshow('Vanishing Points Visualization', frame_with_vps)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()

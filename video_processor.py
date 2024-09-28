@@ -1,23 +1,26 @@
 import cv2
 import numpy as np
 import os
+import json
 from camera_calibration import CameraCalibration
 from car_detection import CarDetection
 from bounding_box_constructor import BoundingBoxConstructor
 from vehicle_tracker import VehicleTracker
 from speed_calculator import SpeedCalculator
 from depth_estimation import DepthEstimationModel
-from depth_masker import DepthMasker
+from masker import Masker
 
 
 class VideoProcessor:
-    def __init__(self, video_path, calibration_file='camera_calibration.json', road_mask_file='road_mask.npy', detection_confidence=0.4):
+    def __init__(self, video_path, calibration_file='camera_calibration.json', road_mask_file='road_mask.npy',
+                 detection_confidence=0.4):
         self.video_path = video_path
         self.calibration_file = calibration_file
         self.road_mask_file = road_mask_file
+        self.detection_confidence = detection_confidence
+
         self.calibration = CameraCalibration()
         self.car_detection = CarDetection()
-        self.detection_confidence = detection_confidence
         self.depth_model = DepthEstimationModel()
         self.tracker = VehicleTracker(max_frames_to_skip=10, min_hits=3, max_track_length=30)
         self.speed_calculator = SpeedCalculator(smoothing_window=5, speed_confidence_threshold=0.8, max_history=100)
@@ -28,13 +31,7 @@ class VideoProcessor:
             raise ValueError("Failed to read the video file.")
         self.height, self.width = self.frame.shape[:2]
 
-        self.calibration = CameraCalibration()
-        if os.path.exists(calibration_file):
-            self.calibration.load_calibration(calibration_file)
-        self.calibration.width = self.width
-        self.calibration.height = self.height
-
-        self.depth_masker = DepthMasker(self.height, self.width)
+        self.masker = Masker(self.height, self.width)
         self.ipm_matrix = None
         self.bbox_constructor = None
 
@@ -43,19 +40,17 @@ class VideoProcessor:
         self.fps = self.cap.get(cv2.CAP_PROP_FPS)
         self.out = cv2.VideoWriter(self.output_path, self.fourcc, self.fps, (self.width, self.height))
 
+        self.results = []  # To store results for JSON logging
+
     def process_video(self):
         # Road mask selection or loading
         if os.path.exists(self.road_mask_file):
-            # Load existing road mask
-            self.depth_masker.load_road_mask(self.road_mask_file)
+            self.masker.load_road_mask(self.road_mask_file)
             print(f"Loaded existing road mask from {self.road_mask_file}")
         else:
-            # Perform manual road selection
             print("Please select the road area...")
-            self.depth_masker.manual_road_selection(self.frame)
-
-            # Save the road mask for future use
-            self.depth_masker.save_road_mask(self.road_mask_file)
+            self.masker.manual_road_selection(self.frame)
+            self.masker.save_road_mask(self.road_mask_file)
             print(f"Saved road mask to {self.road_mask_file}")
 
         # Camera calibration
@@ -64,7 +59,7 @@ class VideoProcessor:
             print(f"Loaded existing camera calibration from {self.calibration_file}")
         else:
             print("Performing camera calibration...")
-            calibration_frames = [self.depth_masker.apply_mask(self.cap.read()[1]) for _ in range(10)]
+            calibration_frames = [self.masker.apply_mask(self.cap.read()[1]) for _ in range(10)]
             self.calibration.calibrate_camera(calibration_frames)
             self.calibration.save_calibration(self.calibration_file)
             print(f"Saved camera calibration to {self.calibration_file}")
@@ -79,11 +74,10 @@ class VideoProcessor:
 
         self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
         frame_count = 0
-
         total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        print(f"Processing video with {total_frames} frames...")
 
-        ipm_view_saved = False
+        cv2.namedWindow('Processed Frame', cv2.WINDOW_NORMAL)
+        cv2.resizeWindow('Processed Frame', 1280, 720)
 
         while True:
             ret, frame = self.cap.read()
@@ -93,36 +87,21 @@ class VideoProcessor:
             frame_count += 1
             current_time = frame_count / self.fps
 
-            # Create a copy of the original frame for visualization
+            # Create copies for visualization
             vis_frame = frame.copy()
+            vis_ipm_frame = self.calibration.apply_ipm(frame.copy())
 
             # Apply depth masking
-            masked_frame = self.depth_masker.apply_mask(frame)
-
-            # Visualize the mask
-            mask_vis = cv2.addWeighted(frame, 0.7, cv2.cvtColor(self.depth_masker.get_mask(), cv2.COLOR_GRAY2BGR), 0.3,
-                                       0)
+            masked_frame = self.masker.apply_mask(frame)
 
             # Apply IPM
             ipm_frame = self.calibration.apply_ipm(masked_frame)
 
-            # Save one frame of the IPM view
-            if not ipm_view_saved:
-                cv2.imwrite('Output/ipm_view.jpg', ipm_frame)
-                ipm_view_saved = True
-
             # Estimate depth
             depth_map = self.depth_model.estimate_depth(ipm_frame)
 
-            # Normalize depth map for visualization
-            depth_vis = cv2.normalize(depth_map, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-            depth_vis = cv2.applyColorMap(depth_vis, cv2.COLORMAP_JET)
-
-            # Apply depth-based masking
-            depth_masked_frame = self.depth_masker.apply_depth_mask(ipm_frame, depth_map)
-
             # Detect vehicles
-            detections = self.car_detection.detect_cars(depth_masked_frame, self.ipm_matrix, self.detection_confidence)
+            detections = self.car_detection.detect_cars(ipm_frame, self.ipm_matrix, self.detection_confidence)
 
             # Construct 3D bounding boxes
             bboxes_3d = []
@@ -137,81 +116,110 @@ class VideoProcessor:
                     bboxes_3d.append(bbox_3d)
 
             # Track vehicles
-            try:
-                tracks = self.tracker.update(bboxes_3d)
-            except Exception as e:
-                print(f"Error in tracking: {str(e)}")
-                tracks = {}
+            tracks = self.tracker.update(bboxes_3d)
 
-                # Calculate speeds and visualize results
-                for track_id, track in tracks.items():
-                    if track['hits'] >= self.tracker.min_hits and track['missed_frames'] == 0:
-                        current_position = np.mean(track['bbox_3d'], axis=0)
-                        speed, confidence = self.speed_calculator.calculate_speed(
-                            track_id, current_position, current_time, current_time - 1 / self.fps, unit='km/h'
-                        )
+            # Visualize results
+            for track_id, track in tracks.items():
+                corners_3d = track['bbox_3d']
+                corners_2d = self.bbox_constructor.project_3d_to_2d(corners_3d)
 
-                        # Visualize results
-                        corners_2d = self.bbox_constructor.project_3d_to_2d(track['bbox_3d'])
-                        self.draw_3d_box(frame, corners_2d)
-                        if speed is not None:
-                            cv2.putText(frame, f"ID: {track_id}, Speed: {speed:.2f} km/h",
-                                        (int(corners_2d[0][0]), int(corners_2d[0][1]) - 10),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                # Draw 3D bounding box in original frame
+                self.draw_3d_box(vis_frame, corners_2d, color=(0, 255, 0))
 
-                    # Draw 2D bounding box
-                    x1, y1 = corners_2d.min(axis=0).astype(int)
-                    x2, y2 = corners_2d.max(axis=0).astype(int)
-                    cv2.rectangle(vis_frame, (x1, y1), (x2, y2), (0, 255, 0), 5)
+                # Calculate speed
+                current_position = np.mean(corners_3d, axis=0)
+                speed, confidence = self.speed_calculator.calculate_speed(
+                    track_id, current_position, current_time, current_time - 1 / self.fps, unit='km/h'
+                )
 
-                    # Draw 3D bounding box
-                    self.draw_3d_box(vis_frame, corners_2d)
+                # Prepare text to display
+                speed_text = f"ID: {track_id}, Speed: {speed:.2f} km/h, Conf: {confidence:.2f}" if speed is not None else f"ID: {track_id}, Speed: N/A"
 
-                    if speed is not None:
-                        # Display ID, speed, and confidence
-                        cv2.putText(vis_frame, f"ID: {track_id}", (x1, y1 - 30),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-                        cv2.putText(vis_frame, f"Speed: {speed:.2f} km/h", (x1, y1 - 10),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-                        cv2.putText(vis_frame, f"Conf: {confidence:.2f}", (x1, y1 + 10),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                # Display in original frame
+                x1, y1 = corners_2d.min(axis=0).astype(int)
+                cv2.putText(vis_frame, speed_text, (x1, y1 - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+
+                # Transform corners to IPM view
+                ipm_corners = self.calibration.apply_ipm(corners_2d.reshape(-1, 1, 2)).reshape(-1, 2)
+
+                # Draw 3D bounding box in IPM view
+                self.draw_3d_box(vis_ipm_frame, ipm_corners, color=(0, 255, 0))
+
+                # Display text in IPM view
+                ipm_x1, ipm_y1 = ipm_corners.min(axis=0).astype(int)
+                cv2.putText(vis_ipm_frame, speed_text, (ipm_x1, ipm_y1 - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+
+                # Store results for JSON logging
+                self.results.append({
+                    'frame': frame_count,
+                    'track_id': track_id,
+                    'speed': speed if speed is not None else 'N/A',
+                    'confidence': confidence if confidence is not None else 'N/A',
+                    'position': current_position.tolist()
+                })
 
             # Combine visualizations
+            mask_vis = cv2.addWeighted(frame, 0.7, cv2.cvtColor(self.masker.get_mask(), cv2.COLOR_GRAY2BGR), 0.3, 0)
+            depth_vis = cv2.normalize(depth_map, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+            depth_vis = cv2.applyColorMap(depth_vis, cv2.COLORMAP_JET)
+
             top_row = np.hstack((vis_frame, mask_vis))
-            bottom_row = np.hstack((depth_vis, cv2.resize(ipm_frame, (vis_frame.shape[1], vis_frame.shape[0]))))
+            bottom_row = np.hstack((depth_vis, vis_ipm_frame))
             combined_vis = np.vstack((top_row, bottom_row))
 
             # Resize the combined visualization to fit the output video dimensions
             combined_vis = cv2.resize(combined_vis, (self.width, self.height))
 
+            # Add debug information
+            cv2.putText(combined_vis, f"Frame: {frame_count}/{total_frames}", (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+
             # Write frame to output video
             self.out.write(combined_vis)
 
-            # Display the frame (optional)
+            # Display the frame
             cv2.imshow('Processed Frame', combined_vis)
-            if cv2.waitKey(1) & 0xFF == ord('q'):
+
+            # Print debug information
+            print(f"Displayed frame {frame_count}/{total_frames}")
+
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord('q'):
                 break
+            elif key == ord('p'):  # Add a pause functionality
+                cv2.waitKey(0)
 
             if frame_count % 100 == 0:
                 print(f"Processed frame {frame_count}/{total_frames} ({frame_count / total_frames * 100:.2f}%)")
+
+        # Save results to JSON file
+        with open('speed_estimation_results.json', 'w') as f:
+            json.dump(self.results, f, indent=2)
 
         self.cap.release()
         self.out.release()
         cv2.destroyAllWindows()
         print("Video processing completed.")
 
-    def draw_3d_box(self, img, corners):
-        # Draw the base of the 3D box
-        for i in range(4):
-            cv2.line(img, tuple(corners[i].astype(int)), tuple(corners[(i + 1) % 4].astype(int)), (0, 255, 0), 2)
+    def draw_3d_box(self, img, corners, color=(0, 255, 0)):
+        def draw_line(start, end):
+            cv2.line(img, tuple(map(int, start)), tuple(map(int, end)), color, 2)
 
-        # Draw the top of the 3D box
+        # Draw bottom face
         for i in range(4):
-            cv2.line(img, tuple(corners[i + 4].astype(int)), tuple(corners[(i + 1) % 4 + 4].astype(int)), (0, 255, 0),
-                     2)
+            draw_line(corners[i], corners[(i + 1) % 4])
 
-        # Draw the vertical lines
+        # Draw top face
         for i in range(4):
-            cv2.line(img, tuple(corners[i].astype(int)), tuple(corners[i + 4].astype(int)), (0, 255, 0), 2)
+            draw_line(corners[i + 4], corners[(i + 1) % 4 + 4])
+
+        # Draw vertical lines
+        for i in range(4):
+            draw_line(corners[i], corners[i + 4])
 
         return img
+
+    def __del__(self):
+        cv2.destroyAllWindows()

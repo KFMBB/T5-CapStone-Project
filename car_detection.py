@@ -5,7 +5,7 @@ import cv2
 
 class CarDetection:
     def __init__(self):
-        self.model = YOLO('models/yolov8m.pt')
+        self.model = YOLO('models/yolov9m.pt')
         self.vehicle_classes = ['car', 'truck', 'bus', 'motorcycle']
 
     def detect_cars(self, frame, ipm_matrix, conf_threshold=0.5):
