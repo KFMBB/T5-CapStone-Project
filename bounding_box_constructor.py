@@ -9,20 +9,17 @@ class BoundingBoxConstructor:
     def construct_3d_box(self, bbox_2d, depth, aspect_ratio=None):
         try:
             x1, y1, x2, y2 = bbox_2d
-            if x1 >= x2 or y1 >= y2 or depth <= 0 or depth > 1:
+            if x1 >= x2 or y1 >= y2 or depth <= 0:
                 raise ValueError("Invalid bounding box or depth")
 
             center = ((x1 + x2) / 2, (y1 + y2) / 2)
             width = x2 - x1
             height = y2 - y1
 
-            # Use a default depth if the estimated depth is unreliable
-            if depth < 0.1:
-                depth = 0.5  # Set a default mid-range depth
-
             # Estimate 3D dimensions
-            width_3d = width * depth * 10  # Scale factor added
-            height_3d = height * depth * 10  # Scale factor added
+            focal_length = self.camera_matrix[0, 0]
+            width_3d = width * depth / focal_length
+            height_3d = height * depth / focal_length
 
             if aspect_ratio is None:
                 length_3d = max(width_3d, height_3d)
@@ -31,14 +28,14 @@ class BoundingBoxConstructor:
 
             # Construct 3D bounding box corners
             corners_3d = np.array([
-                [-width_3d / 2, -height_3d / 2, length_3d / 2],
-                [width_3d / 2, -height_3d / 2, length_3d / 2],
-                [width_3d / 2, height_3d / 2, length_3d / 2],
-                [-width_3d / 2, height_3d / 2, length_3d / 2],
-                [-width_3d / 2, -height_3d / 2, -length_3d / 2],
-                [width_3d / 2, -height_3d / 2, -length_3d / 2],
-                [width_3d / 2, height_3d / 2, -length_3d / 2],
-                [-width_3d / 2, height_3d / 2, -length_3d / 2]
+                [-width_3d/2, -height_3d/2, length_3d/2],
+                [width_3d/2, -height_3d/2, length_3d/2],
+                [width_3d/2, height_3d/2, length_3d/2],
+                [-width_3d/2, height_3d/2, length_3d/2],
+                [-width_3d/2, -height_3d/2, -length_3d/2],
+                [width_3d/2, -height_3d/2, -length_3d/2],
+                [width_3d/2, height_3d/2, -length_3d/2],
+                [-width_3d/2, height_3d/2, -length_3d/2]
             ])
 
             # Align with vanishing points

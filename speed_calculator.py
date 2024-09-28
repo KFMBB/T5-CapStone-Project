@@ -19,8 +19,13 @@ class SpeedCalculator:
                     displacement = np.linalg.norm(current_position - previous_position)
                     speed = displacement / time_diff
 
+                    # Apply a simple low-pass filter
                     if track_id not in self.speed_history:
                         self.speed_history[track_id] = []
+
+                    if len(self.speed_history[track_id]) > 0:
+                        speed = 0.7 * speed + 0.3 * self.speed_history[track_id][-1]
+
                     self.speed_history[track_id].append(speed)
 
                     # Limit history size
@@ -28,7 +33,7 @@ class SpeedCalculator:
                         self.speed_history[track_id] = self.speed_history[track_id][-self.max_history:]
 
                     if len(self.speed_history[track_id]) >= self.smoothing_window:
-                        smoothed_speed = savgol_filter(self.speed_history[track_id], self.smoothing_window, 2)[-1]
+                        smoothed_speed = np.median(self.speed_history[track_id][-self.smoothing_window:])
                         speed_confidence = self.calculate_speed_confidence(self.speed_history[track_id])
                     else:
                         smoothed_speed = speed
