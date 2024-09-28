@@ -195,7 +195,7 @@ class VideoProcessor:
                 print(f"Processed frame {frame_count}/{total_frames} ({frame_count / total_frames * 100:.2f}%)")
 
         # Save results to JSON file
-        with open('speed_estimation_results.json', 'w') as f:
+        with open('Output/speed_estimation_results.json', 'w') as f:
             json.dump(self.results, f, indent=2)
 
         self.cap.release()
