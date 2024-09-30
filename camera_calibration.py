@@ -1,12 +1,13 @@
+
 import cv2
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
 import json
 import random
-
+from google.colab.patches import cv2_imshow
 class CameraCalibration:
-    def __init__(self, model_path='models/vp_using_seg_model_best.keras'):
+    def __init__(self, model_path='/content/drive/MyDrive/Speed_Detection_Project/VP_Model/vp_using_seg_model_best.keras'):
         """
         Initialize the CameraCalibration class.
 
@@ -175,23 +176,77 @@ class CameraCalibration:
         # Compute the IPM matrix using OpenCV
         self.ipm_matrix = cv2.getPerspectiveTransform(src_points, dst_points)
 
-    def visualize_vanishing_points(self, frame, vanishing_points):
-        """
-        Visualize the vanishing points on the given frame.
+    def visualize_vanishing_points(self, frame, vanishing_points, output_path=None):
+     """
+     Visualize vanishing points on the frame, handling cases where VPs are outside the image bounds.
 
-        - frame: The frame where vanishing points are to be visualized.
-        - vanishing_points: List of vanishing points to display.
-        """
-        frame_with_vps = frame.copy()
+     - frame: The frame where vanishing points are to be visualized.
+     - vanishing_points: List of vanishing points to display.
+     - output_path: Path where the visualized frame should be saved (optional).
+     """
+     frame_with_vps = frame.copy()
 
-        # Draw vanishing points as circles on the frame
-        for idx, vp in enumerate(vanishing_points):
-            x, y = int(vp[0]), int(vp[1])
-            cv2.circle(frame_with_vps, (x, y), 10, (0, 0, 255), -1)  # Red circles for vanishing points
-            cv2.putText(frame_with_vps, f'VP{idx+1}', (x + 15, y + 15),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+     # Function to normalize vanishing points from homogeneous to Cartesian coordinates
+     def normalize_vp(vp):
+        if vp[2] != 0:
+            return [vp[0] / vp[2], vp[1] / vp[2]]
+        return [vp[0], vp[1]]  # In case the third component is 0 (shouldn't happen in most cases)
 
-        # Display the frame with vanishing points
-        cv2.imshow('Vanishing Points', frame_with_vps)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
+     # Normalize vanishing points to Cartesian coordinates
+     normalized_vps = [normalize_vp(vp) for vp in vanishing_points]
+
+     # Image boundaries
+     img_h, img_w = frame.shape[:2]
+
+     # Draw vanishing points and lines
+     for idx, vp in enumerate(normalized_vps):
+         x, y = int(vp[0]), int(vp[1])
+
+         if 0 <= x < img_w and 0 <= y < img_h:
+             # Draw a red circle for vanishing points inside the image bounds
+             cv2.circle(frame_with_vps, (x, y), 10, (0, 0, 255), -1)  # Red circle
+             cv2.putText(frame_with_vps, f'VP{idx+1}', (x + 15, y + 15), 
+                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+         else:
+             # Handle vanishing points outside the image bounds
+             if x < 0:
+                 x = 0
+             elif x >= img_w:
+                 x = img_w - 1
+             if y < 0:
+                 y = 0
+             elif y >= img_h:
+                 y = img_h - 1
+            
+             #  Draw an arrow pointing toward the off-screen vanishing point
+             cv2.arrowedLine(frame_with_vps, (img_w // 2, img_h), (x, y), (0, 255, 0), 2)
+
+     # Draw green lines converging to vanishing points from the bottom of the image
+     for vp in normalized_vps:
+         x, y = int(vp[0]), int(vp[1])
+        
+         # Clip the vanishing point to the image bounds (if off-screen)
+         if x < 0:
+             x = 0
+         elif x >= img_w:
+             x = img_w - 1
+         if y < 0:
+             y = 0
+         elif y >= img_h:
+             y = img_h - 1
+
+         # Draw lines converging to vanishing points from the bottom of the image
+         cv2.line(frame_with_vps, (img_w // 4, img_h), (x, y), (0, 255, 0), 2)
+         cv2.line(frame_with_vps, (img_w // 2, img_h), (x, y), (0, 255, 0), 2)
+         cv2.line(frame_with_vps, (3 * img_w // 4, img_h), (x, y), (0, 255, 0), 2)
+
+     # Save or display the frame
+     if output_path:
+         cv2.imwrite(output_path, frame_with_vps)
+         print(f"Vanishing points visualization saved to {output_path}")
+     else:
+         # Display the frame with vanishing points in a window
+         cv2_imshow(frame_with_vps)
+         cv2.waitKey(0)
+         cv2.destroyAllWindows()
+
