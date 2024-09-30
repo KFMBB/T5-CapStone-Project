@@ -10,3 +10,4 @@ transformers~=4.45.0
 ultralytics~=8.2.101
 timm
 opencv-python~=4.10.0.84
+filterpy

@@ -12,7 +12,7 @@ def main():
 
     # Initialize the video processor
     processor = VideoProcessor(video_path, calibration_file, road_mask_file)
-    
+
     # Process the video
     processor.process_video()
 

@@ -54,3 +54,15 @@ class BoundingBoxConstructor:
         # Project 3D corners to 2D image plane
         corners_2d, _ = cv2.projectPoints(corners_3d, np.zeros(3), np.zeros(3), self.camera_matrix, None)
         return corners_2d.reshape(-1, 2)
+
+    def transform_vp2_vp3(self, point):
+        # Transform point from VP2-VP3 plane to image coordinates
+        vp2, vp3 = self.vanishing_points[1:3]
+        basis = np.column_stack((vp2, vp3, np.cross(vp2, vp3)))
+        return np.dot(basis, point)
+
+    def transform_vp1_vp2(self, point):
+        # Transform point from VP1-VP2 plane to image coordinates
+        vp1, vp2 = self.vanishing_points[:2]
+        basis = np.column_stack((vp1, vp2, np.cross(vp1, vp2)))
+        return np.dot(basis, point)
