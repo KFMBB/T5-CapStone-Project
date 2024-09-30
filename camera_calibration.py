@@ -150,7 +150,7 @@ class CameraCalibration:
         - vp2: Second vanishing point.
         """
         # Placeholder: Estimate focal length based on vp1 and vp2
-        return np.linalg.norm(vp1 - vp2)
+        return np.sqrt(abs(np.dot(vp1, vp2)))
 
     def compute_ipm_matrix(self):
         """
