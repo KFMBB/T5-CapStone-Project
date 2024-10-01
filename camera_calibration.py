@@ -24,6 +24,39 @@ class CameraCalibration:
             print(f"Error loading model: {e}")
             raise
 
+    def load_calibration(self, calibration_file):
+        """Load camera calibration data from a JSON file."""
+        try:
+            with open(calibration_file, 'r') as file:
+                data = json.load(file)
+                self.focal_length = data.get('focal_length')
+                self.principal_point = data.get('principal_point')
+                self.vanishing_points = [np.array(vp) for vp in data.get('vanishing_points', [])]
+                self.ipm_matrix = np.array(data.get('ipm_matrix'))
+                self.width = data.get('width')
+                self.height = data.get('height')
+            print(f"Camera calibration data loaded from {calibration_file}")
+        except Exception as e:
+            print(f"Error loading calibration data: {e}")
+            raise
+
+    def get_camera_matrix(self):
+        """Return the camera matrix based on the focal length and principal point."""
+        if self.focal_length is None or self.principal_point is None:
+            raise ValueError("Camera parameters not set. Please calibrate the camera first.")
+        
+        return np.array([
+            [self.focal_length, 0, self.principal_point[0]],
+            [0, self.focal_length, self.principal_point[1]],
+            [0, 0, 1]
+        ])
+
+    def apply_ipm(self, frame):
+        """Apply Inverse Perspective Mapping (IPM) to the given frame."""
+        if self.ipm_matrix is None:
+            raise ValueError("IPM matrix has not been computed. Call calibrate_camera first.")
+        return cv2.warpPerspective(frame, self.ipm_matrix, (self.width, self.height))
+
     def calibrate_camera(self, frames):
         self.load_model()
         self.frames = frames
@@ -117,6 +150,9 @@ class CameraCalibration:
 
         self.ipm_matrix = cv2.getPerspectiveTransform(src_points, dst_points)
 
+        # Print the computed IPM matrix
+        print(f"IPM matrix: {self.ipm_matrix}")
+
     def visualize_vanishing_points(self, frame, vanishing_points, output_path=None):
         frame_with_vps = frame.copy()
 
@@ -147,49 +183,11 @@ class CameraCalibration:
             y = max(0, min(y, img_h - 1))
 
             cv2.line(frame_with_vps, (img_w // 4, img_h), (x, y), (0, 255, 0), 2)
-            cv2.line(frame_with_vps, (img_w // 2, img_h), (x, y), (0, 255, 0), 2)
-            cv2.line(frame_with_vps, (3 * img_w // 4, img_h), (x, y), (0, 255, 0), 2)
 
         if output_path:
             cv2.imwrite(output_path, frame_with_vps)
             print(f"Vanishing points visualization saved to {output_path}")
         else:
-            cv2.imshow('Vanishing Points Visualization', frame_with_vps)
+            cv2.imshow("Vanishing Points", frame_with_vps)
             cv2.waitKey(0)
             cv2.destroyAllWindows()
-
-    def get_camera_matrix(self):
-        if self.focal_length is None or self.principal_point is None:
-            raise ValueError("Camera not calibrated. Call calibrate_camera first.")
-        return np.array([
-            [self.focal_length, 0, self.principal_point[0]],
-            [0, self.focal_length, self.principal_point[1]],
-            [0, 0, 1]
-        ])
-
-    def save_calibration(self, filename):
-        data = {
-            'focal_length': self.focal_length.tolist() if isinstance(self.focal_length, np.ndarray) else self.focal_length,
-            'principal_point': self.principal_point.tolist() if isinstance(self.principal_point, np.ndarray) else self.principal_point,
-            'vanishing_points': [vp.tolist() for vp in self.vanishing_points],
-            'ipm_matrix': self.ipm_matrix.tolist(),
-            'width': self.width,
-            'height': self.height
-        }
-        with open(filename, 'w') as f:
-            json.dump(data, f)
-
-    def load_calibration(self, filename):
-        with open(filename, 'r') as f:
-            data = json.load(f)
-        self.focal_length = np.array(data['focal_length'])
-        self.principal_point = np.array(data['principal_point'])
-        self.vanishing_points = [np.array(vp) for vp in data['vanishing_points']]
-        self.ipm_matrix = np.array(data['ipm_matrix'])
-        self.width = data['width']
-        self.height = data['height']
-
-    def apply_ipm(self, frame):
-        if self.ipm_matrix is None:
-            raise ValueError("IPM matrix has not been computed. Call calibrate_camera first.")
-        return cv2.warpPerspective(frame, self.ipm_matrix, (self.width, self.height))

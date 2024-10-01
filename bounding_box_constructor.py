@@ -45,6 +45,9 @@ class BoundingBoxConstructor:
             # Translate to center position
             corners_3d += np.array([center[0], center[1], depth])
 
+            # Print the 3D box corners
+            print(f"3D box corners: {corners_3d}")
+
             return corners_3d
         except Exception as e:
             print(f"Error in constructing 3D box: {str(e)}")
@@ -66,4 +69,3 @@ class BoundingBoxConstructor:
         vp1, vp2 = self.vanishing_points[:2]
         basis = np.column_stack((vp1, vp2, np.cross(vp1, vp2)))
         return np.dot(basis, point)
-        

@@ -2,7 +2,6 @@ from ultralytics import YOLO
 import numpy as np
 import cv2
 
-
 class CarDetection:
     def __init__(self):
         self.model = YOLO('models/yolov9m.pt')
@@ -29,6 +28,10 @@ class CarDetection:
                             cv2.invert(ipm_matrix)[1]
                         )
                         detections.append([*original_box, conf, cls])
+                        
+                        # Print detection details
+                        print(f"Detection: {original_box}, confidence: {conf:.2f}, class: {self.model.names[int(cls)]}")
+
             return np.array(detections)
         except Exception as e:
             print(f"Error in car detection: {str(e)}")
