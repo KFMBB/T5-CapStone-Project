@@ -19,6 +19,7 @@ class SpeedCalculator:
                     displacement = np.linalg.norm(current_position - previous_position)
                     speed = displacement / time_diff
 
+                    # Apply a simple low-pass filter
                     if track_id not in self.speed_history:
                         self.speed_history[track_id] = []
 
@@ -27,11 +28,12 @@ class SpeedCalculator:
 
                     self.speed_history[track_id].append(speed)
 
+                    # Limit history size
                     if len(self.speed_history[track_id]) > self.max_history:
                         self.speed_history[track_id] = self.speed_history[track_id][-self.max_history:]
 
                     if len(self.speed_history[track_id]) >= self.smoothing_window:
-                        smoothed_speed = savgol_filter(self.speed_history[track_id], self.smoothing_window, 3)[-1]
+                        smoothed_speed = np.median(self.speed_history[track_id][-self.smoothing_window:])
                         speed_confidence = self.calculate_speed_confidence(self.speed_history[track_id])
                     else:
                         smoothed_speed = speed
@@ -64,22 +66,3 @@ class SpeedCalculator:
             return speed * 2.237
         else:
             raise ValueError(f"Unsupported unit: {unit}")
-
-    def calculate_multi_frame_speed(self, track_id, positions, times, unit='m/s'):
-        if len(positions) < 2 or len(positions) != len(times):
-            return None, 0.0
-
-        speeds = []
-        for i in range(1, len(positions)):
-            displacement = np.linalg.norm(positions[i] - positions[i-1])
-            time_diff = times[i] - times[i-1]
-            if time_diff > 0:
-                speeds.append(displacement / time_diff)
-
-        if not speeds:
-            return None, 0.0
-
-        avg_speed = np.mean(speeds)
-        speed_confidence = self.calculate_speed_confidence(speeds)
-
-        return self.convert_speed(avg_speed, unit), speed_confidence
