@@ -66,3 +66,4 @@ class BoundingBoxConstructor:
         vp1, vp2 = self.vanishing_points[:2]
         basis = np.column_stack((vp1, vp2, np.cross(vp1, vp2)))
         return np.dot(basis, point)
+        
