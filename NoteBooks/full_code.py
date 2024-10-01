@@ -796,6 +796,7 @@ class SpeedCalculator:
 import numpy as np
 import cv2
 
+
 class BoundingBoxConstructor:
     def __init__(self, vanishing_points, camera_matrix):
         self.vanishing_points = vanishing_points
@@ -823,14 +824,14 @@ class BoundingBoxConstructor:
 
             # Construct 3D bounding box corners
             corners_3d = np.array([
-                [-width_3d/2, -height_3d/2, length_3d/2],
-                [width_3d/2, -height_3d/2, length_3d/2],
-                [width_3d/2, height_3d/2, length_3d/2],
-                [-width_3d/2, height_3d/2, length_3d/2],
-                [-width_3d/2, -height_3d/2, -length_3d/2],
-                [width_3d/2, -height_3d/2, -length_3d/2],
-                [width_3d/2, height_3d/2, -length_3d/2],
-                [-width_3d/2, height_3d/2, -length_3d/2]
+                [-width_3d / 2, -height_3d / 2, length_3d / 2],
+                [width_3d / 2, -height_3d / 2, length_3d / 2],
+                [width_3d / 2, height_3d / 2, length_3d / 2],
+                [-width_3d / 2, height_3d / 2, length_3d / 2],
+                [-width_3d / 2, -height_3d / 2, -length_3d / 2],
+                [width_3d / 2, -height_3d / 2, -length_3d / 2],
+                [width_3d / 2, height_3d / 2, -length_3d / 2],
+                [-width_3d / 2, height_3d / 2, -length_3d / 2]
             ])
 
             # Align with vanishing points
@@ -850,13 +851,27 @@ class BoundingBoxConstructor:
         corners_2d, _ = cv2.projectPoints(corners_3d, np.zeros(3), np.zeros(3), self.camera_matrix, None)
         return corners_2d.reshape(-1, 2)
 
+    def transform_vp2_vp3(self, point):
+        # Transform point from VP2-VP3 plane to image coordinates
+        vp2, vp3 = self.vanishing_points[1:3]
+        basis = np.column_stack((vp2, vp3, np.cross(vp2, vp3)))
+        return np.dot(basis, point)
+
+    def transform_vp1_vp2(self, point):
+        # Transform point from VP1-VP2 plane to image coordinates
+        vp1, vp2 = self.vanishing_points[:2]
+        basis = np.column_stack((vp1, vp2, np.cross(vp1, vp2)))
+        return np.dot(basis, point)
+
+
+
 #main.py:
 from video_processor import VideoProcessor
 
 
 def main():
     # Video path
-    video_path = 'Input/test_video.avi'
+    video_path = 'Input/test.avi'
 
     # Calibration file path
     calibration_file = 'Files/my_camera_calibration.json'
@@ -873,3 +888,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
