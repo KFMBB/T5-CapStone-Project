@@ -3,7 +3,7 @@ from video_processor import VideoProcessor
 
 def main():
     # Video path
-    video_path = 'Input/Calibration_test2.mov'
+    video_path = 'Input/test.avi'
 
     # Calibration file path
     calibration_file = 'Files/my_camera_calibration.json'
