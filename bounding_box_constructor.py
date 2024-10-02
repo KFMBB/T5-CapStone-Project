@@ -1,6 +1,7 @@
 import numpy as np
 import cv2
 
+
 class BoundingBoxConstructor:
     def __init__(self, vanishing_points, camera_matrix):
         self.vanishing_points = vanishing_points
@@ -28,14 +29,14 @@ class BoundingBoxConstructor:
 
             # Construct 3D bounding box corners
             corners_3d = np.array([
-                [-width_3d/2, -height_3d/2, length_3d/2],
-                [width_3d/2, -height_3d/2, length_3d/2],
-                [width_3d/2, height_3d/2, length_3d/2],
-                [-width_3d/2, height_3d/2, length_3d/2],
-                [-width_3d/2, -height_3d/2, -length_3d/2],
-                [width_3d/2, -height_3d/2, -length_3d/2],
-                [width_3d/2, height_3d/2, -length_3d/2],
-                [-width_3d/2, height_3d/2, -length_3d/2]
+                [-width_3d / 2, -height_3d / 2, length_3d / 2],
+                [width_3d / 2, -height_3d / 2, length_3d / 2],
+                [width_3d / 2, height_3d / 2, length_3d / 2],
+                [-width_3d / 2, height_3d / 2, length_3d / 2],
+                [-width_3d / 2, -height_3d / 2, -length_3d / 2],
+                [width_3d / 2, -height_3d / 2, -length_3d / 2],
+                [width_3d / 2, height_3d / 2, -length_3d / 2],
+                [-width_3d / 2, height_3d / 2, -length_3d / 2]
             ])
 
             # Align with vanishing points
@@ -50,10 +51,11 @@ class BoundingBoxConstructor:
             print(f"Error in constructing 3D box: {str(e)}")
             return None
 
-    def project_3d_to_2d(self, corners_3d):
-        # Project 3D corners to 2D image plane
-        corners_2d, _ = cv2.projectPoints(corners_3d, np.zeros(3), np.zeros(3), self.camera_matrix, None)
-        return corners_2d.reshape(-1, 2)
+    def project_3d_to_2d(self, points_3d):
+        print(f"Projecting 3D points: {points_3d}")
+        points_2d, _ = cv2.projectPoints(points_3d, np.zeros(3), np.zeros(3), self.camera_matrix, None)
+        print(f"Projected 2D points: {points_2d}")
+        return points_2d.reshape(-1, 2)
 
     def transform_vp2_vp3(self, point):
         # Transform point from VP2-VP3 plane to image coordinates
@@ -66,4 +68,3 @@ class BoundingBoxConstructor:
         vp1, vp2 = self.vanishing_points[:2]
         basis = np.column_stack((vp1, vp2, np.cross(vp1, vp2)))
         return np.dot(basis, point)
-        
