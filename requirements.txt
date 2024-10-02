@@ -1,13 +1,35 @@
-torchvision
-absl-py
-scipy~=1.14.1
+# Core libraries
+numpy
+opencv-python
 opencv-python-headless
-tensorflow~=2.16.2
-keras
-numpy~=1.26.4
-torch~=2.2.2
-transformers~=4.45.0
-ultralytics~=8.2.101
-timm
-opencv-python~=4.10.0.84
+torch
+torchvision
+tensorflow
+pymongo
+
+# YOLOv9 dependencies
+ultralytics
+
+# Transformers
+transformers
+
+# Image processing and computer vision
+scikit-image
+scipy
+
+# Deep learning and machine learning
 filterpy
+keras
+
+# Utility libraries
+tqdm
+matplotlib
+seaborn
+pandas
+
+# Google Cloud Vision (if you're using it for OCR)
+google-cloud-vision
+
+# More
+absl-py
+timm
